@@ -1,0 +1,11 @@
+version: 2
+updates:
+  # Keeps the SHA-pinned workflow actions current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+  - package-ecosystem: swift
+    directory: /Tools/ArchitectureRules
+    schedule:
+      interval: monthly

@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Pin the Xcode the project is developed with; the image default moves.
+  DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Show and pin toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          # Package.swift requires swift-tools 6.3; README requires Xcode 26.5+.
+          if ! xcodebuild -version | head -1 | grep -Eq 'Xcode (2[7-9]|[3-9][0-9]|26\.([5-9]|[0-9]{2,}))'; then
+            echo "error: CI requires Xcode 26.5+ (see README Requirements)" >&2
+            exit 1
+          fi
+
+      - name: Install pinned SwiftLint
+        env:
+          # Update together with .swiftlint-version.
+          SWIFTLINT_PKG_SHA256: 825e687d618e17d24bd5fad6d2cf98d4c32a157940ad5b7ce8ae4d722d6afb3a
+        run: |
+          wanted="$(cat .swiftlint-version)"
+          installed="$(swiftlint version 2>/dev/null || true)"
+          if [ "$installed" != "$wanted" ]; then
+            if [ -n "$installed" ]; then
+              brew uninstall swiftlint || true
+            fi
+            echo "installing SwiftLint $wanted (have: ${installed:-none})"
+            curl -fsSL -o /tmp/SwiftLint.pkg \
+              "https://github.com/realm/SwiftLint/releases/download/${wanted}/SwiftLint.pkg"
+            echo "$SWIFTLINT_PKG_SHA256  /tmp/SwiftLint.pkg" | shasum -a 256 -c -
+            sudo installer -pkg /tmp/SwiftLint.pkg -target /
+            rm -f /tmp/SwiftLint.pkg
+          fi
+          swiftlint version
+          test "$(swiftlint version)" = "$wanted" || \
+            (echo "error: swiftlint $(swiftlint version) installed, want $wanted" >&2; exit 1)
+
+      - name: Format check
+        run: make format-check
+
+      - name: Lint
+        run: make lint
+
+      - name: Architecture rules
+        timeout-minutes: 10
+        run: make architecture-test
+
+      - name: Build (warnings as errors, incl. tests)
+        run: make build-strict
+
+      - name: Test (warnings as errors)
+        # A hung test fails here instead of consuming the whole job timeout.
+        timeout-minutes: 15
+        run: make test-strict
+
+      # The release path (optimized build, icon, signing, zip) otherwise runs
+      # for the first time only after a version tag is pushed.
+      - name: Package (release build and zip)
+        env:
+          BUILD: ${{ github.run_number }}
+        run: make dist

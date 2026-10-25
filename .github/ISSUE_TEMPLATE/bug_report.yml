@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a reproducible problem in Iris
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please remove API keys, session IDs, transcripts, clipboard text,
+        and account details before posting logs or screenshots.
+  - type: input
+    id: version
+    attributes:
+      label: Iris version
+      placeholder: "For example: 0.1.0, or a commit built from source"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "For example: macOS 15.5 on Apple Silicon"
+    validations:
+      required: true
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider in use
+      options:
+        - Meta
+        - Grok (xAI)
+        - Neither / setup only
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. ...\n2. ...\n3. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics (optional)
+      description: "Relevant menu-bar message or redacted Console output for subsystem io.github.amscotti.iris. Do not include secrets or transcript text."
+      render: text

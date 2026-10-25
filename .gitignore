@@ -1,0 +1,13 @@
+.build/
+Iris.app/
+dist/
+.DS_Store
+.swiftpm/
+xcuserdata/
+.env
+.env.*
+.review/
+DerivedData/
+*.xcresult
+*.xcodeproj/
+/docs/review-findings.md

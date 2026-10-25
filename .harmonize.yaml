@@ -1,0 +1,9 @@
+# Known build/bundle outputs only. Visible Swift files under Sources, including
+# generated or untracked files, remain part of the architecture review scope.
+# Providers, the audio capturer, and App/Preview are not discovery exclusions.
+# Preview PNG/report I/O has exact file/owner/API exceptions in the syntax rules.
+excludes:
+  - .build
+  - Iris.app
+  - dist
+  - Package.swift

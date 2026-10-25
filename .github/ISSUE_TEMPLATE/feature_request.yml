@@ -1,0 +1,27 @@
+name: Feature request
+description: Suggest an improvement to Iris
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What dictation, setup, provider, or accessibility problem should this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Include any current workaround.
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy or permission impact
+      description: Optional. Note any new audio, transcript, clipboard, credential, or macOS permission needs.

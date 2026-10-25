@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Pin the Xcode the project is developed with; the image default moves.
+  DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  package:
+    name: Package Iris.app
+    needs: test
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      HAS_SIGNING_CERT: ${{ secrets.MACOS_CERTIFICATE_P12 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.MACOS_SIGN_IDENTITY != '' }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "error: tag \"${GITHUB_REF_NAME}\" must be vX.Y.Z (numeric dotted, e.g. v0.1.0) for CFBundleShortVersionString" >&2
+              exit 1
+            fi
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          else
+            # CFBundleShortVersionString must be numeric: keep the dispatch
+            # build on 0.1.0 and carry the run number in CFBundleVersion.
+            echo "version=0.1.0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require complete signing configuration for tags
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [ "$HAS_SIGNING_CERT" != "true" ]; then
+            echo "error: tag builds require MACOS_CERTIFICATE_P12, MACOS_CERTIFICATE_PASSWORD, and MACOS_SIGN_IDENTITY; refusing to publish an ad-hoc app" >&2
+            exit 1
+          fi
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      # Required for tags; optional for a manual non-tag dispatch. Signing with
+      # a Developer ID certificate keeps Microphone and Accessibility grants
+      # across updates (ad-hoc builds lose them). Add a base64 .p12 as
+      # MACOS_CERTIFICATE_P12, its password as MACOS_CERTIFICATE_PASSWORD, and
+      # the identity name as MACOS_SIGN_IDENTITY.
+      - name: Import signing certificate
+        if: ${{ env.HAS_SIGNING_CERT == 'true' }}
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/signing.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          echo "SIGN_IDENTITY=$MACOS_SIGN_IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Build release zip
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ github.run_number }}
+        run: make dist
+
+      - name: Verify signed release
+        if: ${{ env.HAS_SIGNING_CERT == 'true' }}
+        run: |
+          codesign --verify --strict --verbose=2 Iris.app
+          details="$(codesign -d --verbose=4 Iris.app 2>&1)"
+          printf '%s\n' "$details"
+          if printf '%s\n' "$details" | grep -Eq 'Signature=adhoc|flags=.*adhoc'; then
+            echo "error: signed release unexpectedly has an ad-hoc signature" >&2
+            exit 1
+          fi
+          if ! printf '%s\n' "$details" | grep -Fqx "Authority=$SIGN_IDENTITY"; then
+            echo "error: expected signing authority: $SIGN_IDENTITY" >&2
+            exit 1
+          fi
+          case "$SIGN_IDENTITY" in
+            "Developer ID Application:"*)
+              expected_team="$(printf '%s\n' "$SIGN_IDENTITY" | sed -n 's/.*(\([^()]*\))$/\1/p')"
+              if [ -n "$expected_team" ] && ! printf '%s\n' "$details" | grep -Fqx "TeamIdentifier=$expected_team"; then
+                echo "error: expected Developer ID team: $expected_team" >&2
+                exit 1
+              fi
+              ;;
+          esac
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # Reruns otherwise fail with an artifact-already-exists conflict.
+          overwrite: true
+          name: Iris-${{ steps.version.outputs.version }}-macos
+          path: |
+            dist/Iris-${{ steps.version.outputs.version }}-macos.zip
+            dist/Iris-${{ steps.version.outputs.version }}-macos.zip.sha256
+          if-no-files-found: error
+
+  # Only this job can write to the repository, and it never builds or runs
+  # repository code.
+  publish:
+    name: Publish GitHub Release
+    needs: package
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: Iris-${{ needs.package.outputs.version }}-macos
+          path: dist
+
+      - name: Verify release checksum
+        env:
+          VERSION: ${{ needs.package.outputs.version }}
+        run: cd dist && shasum -a 256 -c "Iris-${VERSION}-macos.zip.sha256"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.package.outputs.version }}
+        run: |
+          # Only an annotated tag's ref points at a tag object.
+          if [ "$(gh api "repos/$GH_REPO/git/ref/tags/$GITHUB_REF_NAME" --jq .object.type)" != "tag" ]; then
+            echo "error: tag \"${GITHUB_REF_NAME}\" must be annotated (git tag -a)" >&2
+            exit 1
+          fi
+          # Reruns: re-upload assets to an existing release instead of
+          # failing on "release already exists".
+          if gh release view "$GITHUB_REF_NAME" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" \
+              "dist/Iris-${VERSION}-macos.zip" \
+              "dist/Iris-${VERSION}-macos.zip.sha256" \
+              --clobber --repo "$GH_REPO"
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              "dist/Iris-${VERSION}-macos.zip" \
+              "dist/Iris-${VERSION}-macos.zip.sha256" \
+              --title "Iris ${VERSION}" \
+              --generate-notes \
+              --verify-tag
+          fi
