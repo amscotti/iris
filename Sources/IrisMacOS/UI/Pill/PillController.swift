@@ -58,13 +58,16 @@ public final class PillController {
     /// Applies persisted pill preferences live. The motion toggle forces
     /// reduced motion on; otherwise the system accessibility setting decides.
     public func applyAppearance(
-        reduceMotionOverride: Bool, waveformColorHex: String? = nil, pillTranslucent: Bool = true
+        reduceMotionOverride: Bool, waveformColorHex: String? = nil, pillTranslucent: Bool = true,
+        systemReduceMotion: Bool? = nil
     ) {
         self.reduceMotionOverride = reduceMotionOverride
         self.lastWaveformColorHex = waveformColorHex
         self.lastPillTranslucent = pillTranslucent
+        let systemReduced =
+            systemReduceMotion ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         model.reduceMotion = Self.effectiveReduceMotion(
-            forcing: reduceMotionOverride, system: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+            forcing: reduceMotionOverride, system: systemReduced)
         model.waveformTint = WaveformTint(hex: waveformColorHex)
         model.pillTranslucent = pillTranslucent
         if model.reduceMotion, cursorTimerActive {
